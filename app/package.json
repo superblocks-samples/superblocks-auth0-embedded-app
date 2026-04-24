@@ -3,9 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
-    "@okta/okta-auth-js": "^7.11.1",
-    "@okta/okta-react": "^6.9.0",
-    "@superblocksteam/embed-react": "^1.2.0",
+    "@auth0/auth0-react": "^2.2.4",
+    "@superblocksteam/embed-react": "2.0.0",
     "@testing-library/jest-dom": "^5.17.0",
     "@testing-library/react": "^13.4.0",
     "@testing-library/user-event": "^13.5.0",
@@ -14,7 +13,6 @@
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",
     "dotenv": "^16.4.5",
-    "location": "^0.0.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.4.0",
@@ -43,9 +41,6 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  },
-  "devDependencies": {
-    "concurrently": "^8.2.2"
   },
   "engines": {
     "node": ">=20.0.0",

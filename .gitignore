@@ -5,11 +5,6 @@ node_modules/
 build/
 function.zip
 
-# SAM
-.aws-sam/
-.sam-build/
-samconfig.toml
-
 # Environment files (real values)
 .env*
 env.local.json

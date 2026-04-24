@@ -1,22 +1,15 @@
 {
-  "name": "okta-superblocks-embed",
+  "name": "superblocks-auth0-embedded-app",
   "version": "1.0.0",
-  "description": "A repository for integrating Superblocks with custom authentication using Okta.",
+  "description": "Superblocks embedded app with Auth0 login and Post-Login Action SSO.",
   "scripts": {
-    "install": "npm install --prefix ./app && npm install --prefix ./lambda",
-    "start": "concurrently \"npm run dev:lambda\" \"npm run dev:app\"",
+    "start": "npm run dev --prefix ./app",
     "dev:app": "npm run dev --prefix ./app",
-    "dev:lambda": "npm run sam:local --prefix ./lambda",
     "build:app": "npm run build --prefix ./app",
-    "build:lambda": "npm run sam:build --prefix ./lambda",
-    "build": "concurrently \"npm run build:app\" \"npm run build:lambda\"",
-    "invoke:lambda": "npm run sam:invoke --prefix ./lambda"
+    "build": "npm run build --prefix ./app"
   },
   "author": "Kris Harbold",
   "license": "MIT",
-  "devDependencies": {
-    "concurrently": "^8.2.2"
-  },
   "engines": {
     "node": ">=20.0.0",
     "npm": ">=10.0.0"

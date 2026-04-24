@@ -1,269 +1,184 @@
-# Superblocks Embed + React + Okta Authentication
+# Superblocks Embed + React + Auth0
 
-This example demonstrates how to build a custom authentication flow for embedded Superblocks applications using the Superblocks Embed SDK, Okta for identity management, and AWS Lambda for secure token exchange. The application provides seamless SSO integration with synchronized routing between Superblocks multi-page apps and browser navigation.
+This example shows how to embed a Superblocks application in a React app using [Auth0](https://auth0.com/) for identity and an [Auth0 Post-Login Action](https://auth0.com/docs/customize/actions) to mint a Superblocks session token—no AWS Lambda or SAM required. The flow follows [Login embed users with Auth0](https://docs.superblocks.com/hosting/embedded-apps/how-tos/use-auth-for-sso).
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────┐         ┌──────────────────┐         ┌───────────────┐
-│  React App  │────────▶│       Okta       │         │  Superblocks  │
-│             │◀────────│       OAuth      │         │               │
-└─────────────┘         └──────────────────┘         └───────────────┘
-      │                                                      ▲
-      └────────────────▶┌──────────────────┐─────────────────┘
-                        │  Lambda Function │
-                        │  Token Exchange  │
-                        └──────────────────┘
+│  React App  │────────▶│      Auth0       │         │  Superblocks  │
+│  (Embed)    │◀────────│   Universal      │         │               │
+└─────────────┘         │   Login + Action │         └───────────────┘
+      │                 └──────────────────┘                 ▲
+      │                          │                            │
+      │     Post-Login Action calls Superblocks public token API
+      │     and sets ID token claim: superblocks_token
+      └────────────────────────────────────────────────────────┘
 ```
 
-**Flow:**
+**Flow**
 
-1. User authenticates with Okta
-2. React app sends Okta tokens to Lambda
-3. Lambda validates tokens and exchanges with Superblocks
-4. React embeds Superblocks app with session token
+1. User signs in with Auth0 (Authorization Code + PKCE, refresh tokens enabled on the SPA).
+2. A Post-Login Action calls Superblocks `POST /api/v1/public/token` with your **Embed access token** and user profile, then adds `superblocks_token` to the ID token.
+3. The React app reads `superblocks_token` from ID token claims and passes it to `SuperblocksEmbed`.
 
 ## Prerequisites
 
 - **Node.js** 20+ and **npm** 10+
-- **Docker Desktop** (required for SAM local development)
-- **[AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html)**
-- **Okta Account** with admin access
-- **Superblocks Account** with embed enabled
-- **AWS Account** (for production deployment only)
+- **Auth0** tenant (free tier is fine)
+- **Auth0 CLI** (optional but recommended for app setup): [Auth0 CLI](https://github.com/auth0/auth0-cli)
+- **Superblocks** org with embed enabled and an **Embed** access token ([Create an Embed access token](https://docs.superblocks.com/admin/org-administration/auth/access-tokens))
 
-## 🚀 Quick Start – Local Development
+## Quick start
 
-### 1. Clone and Install
+### 1. Clone and install
 
 ```bash
-git clone https://github.com/superblocks-samples/superblocks-okta-embedded-app.git
-cd superblocks-okta-embedded-app
-npm install
+git clone https://github.com/superblocks-samples/superblocks-auth0-embedded-app.git
+cd superblocks-auth0-embedded-app
+cd app && npm install && cd ..
 ```
 
-### 2. Setup Okta
+This sample uses `@superblocksteam/embed-react@2.0.0`, which resolves from the **public npm registry**. If you use a different version or registry and `npm install` returns **401 Unauthorized**, configure `~/.npmrc` for that registry per [Superblocks](https://docs.superblocks.com/) / your org’s setup, then install again in `app/`.
 
-Create an Okta OIDC Single-Page Application ([detailed guide](docs/setup-okta-app.md)):
+### 2. Create the Auth0 SPA application
 
-1. Go to Okta Admin Console > **Applications** > **Create App Integration**
-2. Select **OIDC** and **Single-Page Application**
-3. Add redirect URI: `http://localhost:3000/login/callback`
-4. Save your **Client ID** and **Issuer URL**
-
-### 3. Configure Environment
-
-**Lambda** (`lambda/env.local.json`):
+Use the [Auth0 CLI](https://auth0.github.io/auth0-cli/auth0_apps_create.html) (after `auth0 login`):
 
 ```bash
-cp lambda/env.local.json.example lambda/env.local.json
+auth0 apps create \
+  --name "Superblocks Embed (local)" \
+  --type spa \
+  --callbacks "http://localhost:3000/login/callback" \
+  --logout-urls "http://localhost:3000" \
+  --origins "http://localhost:3000" \
+  --web-origins "http://localhost:3000"
 ```
 
-Edit with your values:
+Note the **Client ID** and your tenant **Domain** (for example `dev-abc.us.auth0.com`). More detail: [docs/setup-auth0-app.md](docs/setup-auth0-app.md).
 
-```json
-{
-  "TokenExchangeFunction": {
-    "SUPERBLOCKS_EMBED_ACCESS_TOKEN": "sb_embed_your-token",
-    "OKTA_ISSUER": "https://your-domain.okta.com/oauth2/default",
-    "OKTA_AUDIENCE": "api://default",
-    "SUPERBLOCKS_URL": "https://your-instance.superblocks.com",
-    "DEBUG": "true"
-  }
-}
-```
+### 3. Deploy the Post-Login Action
 
-**React App** (`app/.env.local`):
+Copy the code from [auth0/actions/superblocks-login.js](auth0/actions/superblocks-login.js) into an Auth0 Action (trigger: **Login / Post Login**), add the `axios` dependency, create secrets `SUPERBLOCKS_TOKEN` (your embed access token) and optionally `SUPERBLOCKS_REGION` (`app` or `eu`), then add the Action to the **Login** flow. Step-by-step: [docs/auth0-post-login-action.md](docs/auth0-post-login-action.md). The Superblocks tutorial is here: [use-auth-for-sso](https://docs.superblocks.com/hosting/embedded-apps/how-tos/use-auth-for-sso).
+
+### 4. Configure the React app
+
+Create React App loads variables whose names start with `REACT_APP_` from a file named **`.env.local`** in the **`app/`** directory (not the repo root). Restart the dev server after you change this file.
 
 ```bash
 cp app/env.example app/.env.local
 ```
 
-Edit with your values:
+Edit **`app/.env.local`** in a text editor and set the values below (no quotes needed for simple values; no spaces around `=`).
+
+| Variable | Where to get the value |
+| -------- | ---------------------- |
+| `REACT_APP_AUTH0_DOMAIN` | Auth0 Dashboard → **Applications** → your SPA → **Settings** → **Domain** (e.g. `dev-abc.us.auth0.com`). Or the tenant domain shown after `auth0 login` / in the CLI output when you create the app. |
+| `REACT_APP_AUTH0_CLIENT_ID` | Same Auth0 application page → **Client ID**. If you used the CLI, it prints the client id when the app is created. |
+| `REACT_APP_SUPERBLOCKS_APPLICATION_ID` | Superblocks Admin → **Applications** → open your app → copy its **application ID** (UUID) from the URL or app settings. |
+| `REACT_APP_SUPERBLOCKS_URL` | Your Superblocks instance **origin only**: `https://app.superblocks.com` (US) or `https://eu.superblocks.com` (EU), or your org’s custom host. Do not include a path or trailing slash. |
+
+Example (replace with your real values):
 
 ```env
-REACT_APP_OKTA_CLIENT_ID=your-okta-client-id
-REACT_APP_OKTA_ISSUER=https://your-domain.okta.com/oauth2/default
-REACT_APP_SUPERBLOCKS_APPLICATION_ID=your-app-id
-REACT_APP_SUPERBLOCKS_URL=https://your-instance.superblocks.com
-REACT_APP_USE_LOCAL_LAMBDA=true
+REACT_APP_AUTH0_DOMAIN=dev-abc.us.auth0.com
+REACT_APP_AUTH0_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+REACT_APP_SUPERBLOCKS_APPLICATION_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+REACT_APP_SUPERBLOCKS_URL=https://app.superblocks.com
 ```
 
-> ⚠️ `OKTA_ISSUER` must match in both files. SAM local development requires Docker Desktop.
+### 5. Run locally
 
-### 4. Start Development
+Run this from the **repository root** (the folder that contains the root `package.json`, e.g. `superblocks-auth0-embedded-app`), not from inside `app/`:
 
 ```bash
 npm start
 ```
 
-Opens http://localhost:3000 (React) and http://localhost:3001 (Lambda via SAM local).
-
-## 🚢 Production Deployment
-
-### 1. Create Secrets Manager Secret
-
-Store your Superblocks embed access token in AWS Secrets Manager:
+That runs `react-scripts start` in **`app/`** via the root script. You must finish **step 1** first so dependencies exist under **`app/node_modules`** (including `react-scripts`). If you skipped install or it failed, run:
 
 ```bash
-aws secretsmanager create-secret \
-    --name superblocks/embed-access-token \
-    --secret-string "your-superblocks-embed-access-token"
+cd app && npm install && cd ..
 ```
 
-Note the ARN from the output — you'll need it during deployment.
+Then try `npm start` again from the repo root.
 
-### 2. Deploy Lambda Function
+**Alternative:** from **`app/`** you can run `npm run dev` (same dev server; uses the `dev` script in `app/package.json`).
 
-Deploy with SAM ([detailed guide](docs/deploy-lambda.md)):
+Open [http://localhost:3000](http://localhost:3000). You should be redirected to Auth0, then return to the app with the embed loaded.
+
+## Production
+
+For real users, **create a dedicated Auth0 application for production** — and ideally a separate Auth0 **tenant** as well (e.g. `mycompany-dev`, `mycompany-prod`). Don't simply add production URLs to the local SPA you made in step 2; that mixes environments and widens the redirect-URI attack surface. Details and CLI commands: [docs/setup-auth0-app.md → Production application](docs/setup-auth0-app.md#production-application).
+
+1. **Auth0 prod SPA** — create a new SPA in your prod tenant with prod URLs only:
+
+   ```bash
+   auth0 tenants use mycompany-prod   # if you split tenants
+   auth0 apps create \
+     --name "Superblocks Embed (prod)" \
+     --type spa \
+     --callbacks "https://app.example.com/login/callback" \
+     --logout-urls "https://app.example.com" \
+     --origins   "https://app.example.com" \
+     --web-origins "https://app.example.com"
+   ```
+
+2. **Post-Login Action** — repeat [docs/auth0-post-login-action.md](docs/auth0-post-login-action.md) inside the prod tenant, with a production Superblocks embed token in `SUPERBLOCKS_TOKEN`.
+
+3. **Build & host** — `cd app && npm run build` and host `app/build/` on S3, Netlify, Vercel, etc.
+
+4. **Production env vars** — set the **prod** SPA's domain/client id and the prod Superblocks app id/url in your hosting provider's environment variables (`REACT_APP_AUTH0_DOMAIN`, `REACT_APP_AUTH0_CLIENT_ID`, `REACT_APP_SUPERBLOCKS_APPLICATION_ID`, `REACT_APP_SUPERBLOCKS_URL`).
+
+## Configuration reference
+
+| Variable | Required | Description |
+| -------- | -------- | ----------- |
+| `REACT_APP_AUTH0_DOMAIN` | Yes | Auth0 domain |
+| `REACT_APP_AUTH0_CLIENT_ID` | Yes | SPA client ID |
+| `REACT_APP_SUPERBLOCKS_APPLICATION_ID` | Yes | Superblocks app ID |
+| `REACT_APP_SUPERBLOCKS_URL` | Yes | Superblocks instance URL |
+| `REACT_APP_SUPERBLOCKS_APP_VERSION` | No | `2.0` (code mode) or `1.0` (legacy); default `2.0` |
+
+## Scripts
+
+Run **`npm start`** and **`npm run build`** from the **repository root**. Install dependencies from **`app/`** (see step 1).
+
+| Command | Where | Description |
+| ------- | ----- | ----------- |
+| `npm install` | `app/` | Install React app dependencies (`react-scripts`, embed SDK, etc.) |
+| `npm start` | repo root | Start the dev server (port 3000) |
+| `npm run build` | `app/` | Production build → `app/build/` |
+
+## Troubleshooting
+
+**`react-scripts: command not found`**  
+Dependencies are not installed in **`app/`**. From the repo root run `cd app && npm install`. Confirm **`app/node_modules/.bin/react-scripts`** exists. If `npm install` in `app/` fails with **401** on `@superblocksteam/embed-react`, fix registry authentication (see step 1), then install again.
+
+**`EACCES: permission denied … app/node_modules/.cache`** (or other `EACCES` errors during `npm install` / `npm start`)  
+`app/node_modules` was created with elevated permissions (e.g. an earlier `sudo npm install`), so the dev server can't write its cache. Fix ownership and reinstall:
 
 ```bash
-cd lambda
-sam build
-sam deploy --guided
+sudo chown -R "$(id -un)":"$(id -gn)" app/node_modules
+cd app && rm -rf node_modules/.cache && npm install
 ```
 
-SAM will prompt you for parameter values including `SuperblocksTokenSecretArn` (the ARN from step 1) and create the API Gateway automatically.
+**`superblocks_token` missing on ID token**  
+Confirm the Action is deployed, secrets are set, `axios` is added, and the Action is attached to the **Login** flow. Sign out and sign in again.
 
-### 3. Deploy React App
+**Redirect URI mismatch**  
+Callback URL in Auth0 must exactly match `https://<your-host>/login/callback` (or `http://localhost:3000/login/callback` for local dev).
 
-Build the app:
+**EU Superblocks**  
+Set Action secret `SUPERBLOCKS_REGION` to `eu` (see [auth0/actions/superblocks-login.js](auth0/actions/superblocks-login.js)).
 
-```bash
-cd app
-npm run build
-```
+## Resources
 
-Deploy `app/build/` to your hosting provider (AWS S3, Netlify, Vercel, etc.).
+- [Superblocks: Login embed users with Auth0](https://docs.superblocks.com/hosting/embedded-apps/how-tos/use-auth-for-sso)
+- [Embedded app authentication](https://docs.superblocks.com/hosting/embedded-apps/authentication)
+- [Auth0 CLI](https://github.com/auth0/auth0-cli)
+- [Auth0 React SDK](https://github.com/auth0/auth0-react)
 
-Configure production environment variables:
+## License
 
-```env
-REACT_APP_OKTA_CLIENT_ID=your-okta-client-id
-REACT_APP_OKTA_ISSUER=https://your-domain.okta.com/oauth2/default
-REACT_APP_SUPERBLOCKS_APPLICATION_ID=your-app-id
-REACT_APP_SUPERBLOCKS_URL=https://your-instance.superblocks.com
-REACT_APP_USE_LOCAL_LAMBDA=false
-REACT_APP_API_GATEWAY_URL=https://your-api-gateway-url.com/prod/auth
-```
-
-### 4. Update Okta Configuration
-
-Add your production URL to Okta redirect URIs:
-
-- Sign-in redirect URI: `https://yourdomain.com/login/callback`
-- Sign-out redirect URI: `https://yourdomain.com`
-
-## 🔧 Configuration
-
-### Environment Variables
-
-**React App** (`app/.env.local`):
-
-| Variable                               | Required | Description                                      | Default |
-| -------------------------------------- | -------- | ------------------------------------------------ | ------- |
-| `REACT_APP_OKTA_CLIENT_ID`             | ✅       | Okta client ID                                   | -       |
-| `REACT_APP_OKTA_ISSUER`                | ✅       | Okta issuer URL                                  | -       |
-| `REACT_APP_SUPERBLOCKS_APPLICATION_ID` | ✅       | Superblocks app ID                               | -       |
-| `REACT_APP_SUPERBLOCKS_URL`            | ✅       | Superblocks instance URL                         | -       |
-| `REACT_APP_SUPERBLOCKS_APP_VERSION`    | ❌       | App version: `1.0` (legacy) or `2.0` (code mode) | `2.0`   |
-| `REACT_APP_USE_LOCAL_LAMBDA`           | ❌       | Use local Lambda server                          | `false` |
-| `REACT_APP_API_GATEWAY_URL`            | ✅\*     | API Gateway URL (\*required if not local)        | -       |
-
-**Lambda** (`lambda/env.local.json`):
-
-| Variable                         | Required | Description                             | Default         |
-| -------------------------------- | -------- | --------------------------------------- | --------------- |
-| `SUPERBLOCKS_EMBED_ACCESS_TOKEN` | ✅       | Superblocks embed token                 | -               |
-| `OKTA_ISSUER`                    | ✅       | Okta issuer URL (must match React app)  | -               |
-| `SUPERBLOCKS_URL`                | ✅       | Superblocks instance URL                | -               |
-| `OKTA_AUDIENCE`                  | ❌       | Expected JWT audience claim             | `api://default` |
-| `DEBUG`                          | ❌       | Enable verbose logging (⚠️ local only!) | `false`         |
-
-### Available Scripts
-
-**Root Directory:**
-
-| Script                  | Description                           |
-| ----------------------- | ------------------------------------- |
-| `npm start`             | Start full stack (SAM Lambda + React) |
-| `npm run dev:app`       | Start React app only                  |
-| `npm run dev:lambda`    | Start SAM local API (port 3001)       |
-| `npm run build:app`     | Build React app for deployment        |
-| `npm run build:lambda`  | Build the Lambda SAM application      |
-| `npm run invoke:lambda` | Invoke Lambda locally with test event |
-
-**Lambda** (`lambda/`):
-
-| Script              | Description                              |
-| ------------------- | ---------------------------------------- |
-| `npm run sam:build` | Build the SAM application                |
-| `npm run sam:local` | Start SAM local API (port 3001)          |
-| `npm run sam:invoke`| Invoke function locally with test event  |
-
-## 🐛 Troubleshooting
-
-### "Failed to fetch" Error
-
-**Cause:** Lambda server not running or wrong URL
-
-**Fix:**
-
-- Verify `REACT_APP_USE_LOCAL_LAMBDA=true` in `app/.env.local`
-- Ensure Lambda server is running: `npm run dev:lambda`
-- Restart React app after changing environment variables: `npm run dev:app`
-
-### Okta "Policy evaluation failed"
-
-**Cause:** Okta misconfiguration
-
-**Fix:**
-
-- Verify redirect URIs in Okta app match your app URL
-- Check user is assigned to the Okta application
-- Verify authorization server has a default policy
-
-### Token Validation Failed
-
-**Cause:** Mismatched `OKTA_ISSUER`
-
-**Fix:**
-
-- Ensure `OKTA_ISSUER` in `lambda/env.local.json` matches `REACT_APP_OKTA_ISSUER` in `app/.env.local`
-- Check for trailing slashes or typos
-
-### CORS Errors
-
-**Cause:** API Gateway CORS not configured
-
-**Fix:**
-
-- Enable CORS in API Gateway
-- Allow `Authorization` and `Content-Type` headers
-- Add your app origin to allowed origins
-
-## 📚 Additional Resources
-
-- [Superblocks Embedded Apps](https://docs.superblocks.com/applications/embedded-apps/)
-- [Superblocks Embed SDK](https://docs.superblocks.com/applications/embedded-apps/embed-sdk)
-- [Okta React SDK](https://github.com/okta/okta-react)
-- [Setup Okta App Guide](docs/setup-okta-app.md)
-- [Deploy Lambda Guide](docs/deploy-lambda.md)
-
-## 🙋 FAQ
-
-**Q: Can I use a different identity provider?**  
-A: Yes! Update the React app to use your IdP's SDK and modify Lambda to validate their tokens.
-
-**Q: Do I need AWS Lambda?**  
-A: No, any backend that can validate tokens and exchange with Superblocks will work.
-
-**Q: How do I handle token refresh?**  
-A: Okta React SDK handles access token refresh automatically. Superblocks session is managed by the Embed SDK.
-
-**Q: Can I embed multiple Superblocks apps?**  
-A: Yes! Change `REACT_APP_SUPERBLOCKS_APPLICATION_ID` or implement routing to switch between apps.
-
-## 📝 License
-
-This is a sample/demo application provided for reference.
+Sample/demo application for reference (MIT).

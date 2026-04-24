@@ -1,9 +1,21 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useLocation } from "react-router-dom";
-import { useOktaAuth } from '@okta/okta-react';
+import { useAuth0 } from "@auth0/auth0-react";
 import { SuperblocksEmbed } from "@superblocksteam/embed-react";
 import ErrorPage from "./components/ErrorPage";
 import "./App.css";
+
+// embed-react v2 only re-exports `SuperblocksEmbed` from its package root, so
+// mirror the relevant event shapes locally to match the v2 callback signatures.
+type NavigationEvent = {
+  url: string;
+  href: string;
+  appId?: string;
+  pathname?: string;
+  search?: string;
+  queryParams?: Record<string, string>;
+};
+type AuthErrorEvent = { error: string };
 
 interface AppError {
   title: string;
@@ -14,229 +26,162 @@ interface AppError {
 
 const App = () => {
   const location = useLocation();
-  const { authState, oktaAuth } = useOktaAuth();
+  const { isLoading, isAuthenticated, loginWithRedirect, logout, getIdTokenClaims } = useAuth0();
   const [superblocksToken, setSuperblocksToken] = useState<string>();
   const [error, setError] = useState<AppError | null>(null);
 
-  const path = `${location.pathname}${location.search}`;
+  // Strip the Auth0 callback path so it never gets forwarded to the embed,
+  // which would render a 404 inside the Superblocks app.
+  const rawPath = `${location.pathname}${location.search}`;
+  const path = location.pathname.startsWith("/login/callback") ? "" : rawPath;
 
-  // Environment variables
   const superblocksApplicationId = process.env.REACT_APP_SUPERBLOCKS_APPLICATION_ID;
   const superblocksUrl = process.env.REACT_APP_SUPERBLOCKS_URL;
-  const superblocksAppVersion = process.env.REACT_APP_SUPERBLOCKS_APP_VERSION || '2.0';
-  const tokenUrl = process.env.REACT_APP_USE_LOCAL_LAMBDA === 'true'
-    ? 'http://localhost:3001/oauth2/token'
-    : process.env.REACT_APP_API_GATEWAY_URL;
+  const superblocksAppVersion = process.env.REACT_APP_SUPERBLOCKS_APP_VERSION || "2.0";
 
-  // Build Superblocks embed URL based on version
   const getSuperblocksEmbedUrl = () => {
-    const basePath = superblocksAppVersion === '2.0'
-      ? '/code-mode/embed/applications'
-      : '/embed/applications';
+    const basePath =
+      superblocksAppVersion === "2.0" ? "/code-mode/embed/applications" : "/embed/applications";
     return `${superblocksUrl}${basePath}/${superblocksApplicationId}${path}`;
   };
 
-  // Okta Authentication to React App
-  const login = async () => {
-    await oktaAuth.signInWithRedirect();
-  }
+  const handleLogout = () => {
+    logout({ logoutParams: { returnTo: window.location.origin } });
+  };
 
-  const logout = async () => {
-    await oktaAuth.signOut();
-  }
+  const loadSuperblocksTokenFromIdToken = useCallback(async () => {
+    setError(null);
+    try {
+      const claims = await getIdTokenClaims();
+      const token = claims?.superblocks_token as string | undefined;
+      if (!token) {
+        setError({
+          title: "Superblocks token missing",
+          message:
+            "Your ID token does not include superblocks_token. Add the Post-Login Action to your Auth0 Login flow and ensure it sets this claim.",
+          details:
+            "See auth0/actions/superblocks-login.js and https://docs.superblocks.com/hosting/embedded-apps/how-tos/use-auth-for-sso",
+        });
+        return;
+      }
+      setSuperblocksToken(token);
+    } catch (err) {
+      console.error("Failed to read ID token claims:", err);
+      setError({
+        title: "Authentication error",
+        message: "Could not read your session. Try signing out and signing in again.",
+        details: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [getIdTokenClaims]);
 
   const handleRetry = () => {
     setError(null);
-    if (authState?.isAuthenticated && authState?.accessToken && authState?.idToken) {
-      getSuperblocksToken(authState.accessToken, authState.idToken);
+    if (isAuthenticated) {
+      loadSuperblocksTokenFromIdToken();
     }
   };
 
-  // Auto-redirect to login if user is not authenticated
   useEffect(() => {
-    if (!authState) {
-      return; // Still loading auth state
+    if (!isLoading && !isAuthenticated) {
+      const onCallback = window.location.pathname.startsWith("/login/callback");
+      const returnTo = onCallback
+        ? "/"
+        : `${window.location.pathname}${window.location.search}`;
+      loginWithRedirect({ appState: { returnTo } });
     }
-
-    if (!authState.isAuthenticated && !authState.isPending) {
-      login();
-    }
-  }, [authState, oktaAuth]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Authenticate user to Superblocks
-  const getSuperblocksToken = useCallback(async (accessToken: any, idToken: any) => {
-    if (!tokenUrl) {
-      console.error('Token URL not configured. Set REACT_APP_API_GATEWAY_URL or REACT_APP_USE_LOCAL_LAMBDA=true');
-      setError({
-        title: 'Configuration Error',
-        message: 'Token exchange server URL is not configured.',
-        details: 'Set REACT_APP_API_GATEWAY_URL or REACT_APP_USE_LOCAL_LAMBDA=true in your environment configuration.',
-      });
-      return;
-    }
-
-    // Clear any previous errors when retrying
-    setError(null);
-
-    try {
-      console.log('Fetching Superblocks token from:', tokenUrl);
-
-      const res = await fetch(tokenUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken.accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          id_token: idToken.idToken,
-        }),
-      });
-
-      if (!res.ok) {
-        let errorData: any;
-        let errorText = '';
-
-        try {
-          errorData = await res.json();
-          errorText = errorData.message || errorData.error || JSON.stringify(errorData);
-        } catch {
-          errorText = await res.text();
-        }
-
-        console.error('Superblocks auth error:', res.status, errorText);
-
-        // Set appropriate error based on status code
-        if (res.status === 401 || res.status === 403) {
-          setError({
-            title: 'Authentication Failed',
-            message: 'Unable to authenticate with the token exchange server. Your session may have expired.',
-            details: `Status ${res.status}: ${errorText}`,
-            statusCode: res.status,
-          });
-        } else if (res.status === 500 || res.status === 502 || res.status === 503) {
-          setError({
-            title: 'Server Error',
-            message: 'The authentication server encountered an error. Please try again in a moment.',
-            details: `Status ${res.status}: ${errorText}`,
-            statusCode: res.status,
-          });
-        } else {
-          setError({
-            title: 'Authentication Error',
-            message: 'An unexpected error occurred during authentication.',
-            details: `Status ${res.status}: ${errorText}`,
-            statusCode: res.status,
-          });
-        }
-        return;
-      }
-
-      const data = await res.json();
-      console.log('Successfully received Superblocks token');
-      setSuperblocksToken(data?.access_token);
-    } catch (error) {
-      console.error('Failed to fetch Superblocks token:', error);
-
-      setError({
-        title: 'Connection Error',
-        message: 'Failed to connect to the authentication server. Please check your network connection and ensure the server is running.',
-        details: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-      });
-    }
-  }, [tokenUrl]);
+  }, [isLoading, isAuthenticated, loginWithRedirect]);
 
   useEffect(() => {
-    if (authState?.isAuthenticated && authState?.accessToken) {
-      getSuperblocksToken(authState.accessToken, authState.idToken);
+    if (isAuthenticated && !isLoading) {
+      loadSuperblocksTokenFromIdToken();
     }
-  }, [authState, getSuperblocksToken]);
+  }, [isAuthenticated, isLoading, loadSuperblocksTokenFromIdToken]);
 
-  // Handle Superblocks session expiration or authentication errors
-  const handleAuthError = (err: any) => {
-    console.error('Superblocks authentication error:', err);
-
-    // Clear the token to show error page instead of embed
+  const handleAuthError = (event: AuthErrorEvent) => {
+    console.error("Superblocks authentication error:", event);
     setSuperblocksToken(undefined);
-
-    // Set error state to display error page
     setError({
-      title: 'Session Expired',
-      message: 'Your Superblocks session has expired or encountered an authentication error.',
-      details: err?.message || JSON.stringify(err),
+      title: "Session Expired",
+      message: "Your Superblocks session has expired or encountered an authentication error.",
+      details: event?.error,
     });
-  }
+  };
 
-  const handleNavigation = (event: any) => {
-    let route = `${event.pathname}${event.search}`;
+  const handleNavigation = (event: NavigationEvent) => {
+    const route = `${event.pathname ?? ""}${event.search ?? ""}` || event.href || event.url;
     console.log(`User navigated to: ${route}`);
-    window.history.pushState({ path: route }, '', route);
-  }
+    window.history.pushState({ path: route }, "", route);
+  };
 
-  // Handle custom events emitted from Superblocks App
-  const handleEvents = (event: string) => {
-    switch (event) {
-      case 'logout':
-        // Log user out of Okta app when logout button is clicked
-        logout();
+  const handleEvents = (eventName: string, payload: Record<string, unknown>) => {
+    switch (eventName) {
+      case "logout":
+        handleLogout();
         break;
       default:
-        console.log(`Unknown event ${event}`);
+        console.log(`Unknown event ${eventName}`, payload);
     }
-  }
+  };
 
-  // Show loading state while auth is pending or token is being fetched
-  if (!authState || authState.isPending) {
+  if (isLoading) {
     return (
       <div className="App">
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          height: '100vh',
-          flexDirection: 'column',
-          gap: '1rem'
-        }}>
-          <div style={{
-            border: '4px solid #f3f3f3',
-            borderTop: '4px solid #3498db',
-            borderRadius: '50%',
-            width: '40px',
-            height: '40px',
-            animation: 'spin 1s linear infinite'
-          }} />
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            height: "100vh",
+            flexDirection: "column",
+            gap: "1rem",
+          }}
+        >
+          <div
+            style={{
+              border: "4px solid #f3f3f3",
+              borderTop: "4px solid #3498db",
+              borderRadius: "50%",
+              width: "40px",
+              height: "40px",
+              animation: "spin 1s linear infinite",
+            }}
+          />
           <p>Loading...</p>
         </div>
       </div>
     );
   }
 
-  // Show loading state while redirecting to login
-  if (authState && !authState.isAuthenticated) {
+  if (!isAuthenticated) {
     return (
       <div className="App">
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          height: '100vh',
-          flexDirection: 'column',
-          gap: '1rem'
-        }}>
-          <div style={{
-            border: '4px solid #f3f3f3',
-            borderTop: '4px solid #3498db',
-            borderRadius: '50%',
-            width: '40px',
-            height: '40px',
-            animation: 'spin 1s linear infinite'
-          }} />
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            height: "100vh",
+            flexDirection: "column",
+            gap: "1rem",
+          }}
+        >
+          <div
+            style={{
+              border: "4px solid #f3f3f3",
+              borderTop: "4px solid #3498db",
+              borderRadius: "50%",
+              width: "40px",
+              height: "40px",
+              animation: "spin 1s linear infinite",
+            }}
+          />
           <p>Redirecting to login...</p>
         </div>
       </div>
     );
   }
 
-  // Show error page if there's an error
   if (error) {
     return (
       <ErrorPage
@@ -245,43 +190,45 @@ const App = () => {
         details={error.details}
         statusCode={error.statusCode}
         onRetry={handleRetry}
-        onLogout={logout}
+        onLogout={handleLogout}
       />
     );
   }
 
   return (
     <div className="App">
-      {
-        superblocksToken ? (
-          <SuperblocksEmbed
-            src={getSuperblocksEmbedUrl()}
-            onNavigation={handleNavigation}
-            onAuthError={handleAuthError}
-            onEvent={handleEvents}
-            token={superblocksToken}
+      {superblocksToken ? (
+        <SuperblocksEmbed
+          src={getSuperblocksEmbedUrl()}
+          onNavigation={handleNavigation}
+          onAuthError={handleAuthError}
+          onEvent={handleEvents}
+          token={superblocksToken}
+        />
+      ) : (
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            height: "100vh",
+            flexDirection: "column",
+            gap: "1rem",
+          }}
+        >
+          <div
+            style={{
+              border: "4px solid #f3f3f3",
+              borderTop: "4px solid #3498db",
+              borderRadius: "50%",
+              width: "40px",
+              height: "40px",
+              animation: "spin 1s linear infinite",
+            }}
           />
-        ) : (
-          <div style={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            height: '100vh',
-            flexDirection: 'column',
-            gap: '1rem'
-          }}>
-            <div style={{
-              border: '4px solid #f3f3f3',
-              borderTop: '4px solid #3498db',
-              borderRadius: '50%',
-              width: '40px',
-              height: '40px',
-              animation: 'spin 1s linear infinite'
-            }} />
-            <p>Authenticating...</p>
-          </div>
-        )
-      }
+          <p>Authenticating...</p>
+        </div>
+      )}
     </div>
   );
 };

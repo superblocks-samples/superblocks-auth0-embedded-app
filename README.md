@@ -39,8 +39,6 @@ cd superblocks-auth0-embedded-app
 cd app && npm install && cd ..
 ```
 
-This sample uses `@superblocksteam/embed-react@2.0.0`, which resolves from the **public npm registry**. If you use a different version or registry and `npm install` returns **401 Unauthorized**, configure `~/.npmrc` for that registry per [Superblocks](https://docs.superblocks.com/) / your org’s setup, then install again in `app/`.
-
 ### 2. Create the Auth0 SPA application
 
 Use the [Auth0 CLI](https://auth0.github.io/auth0-cli/auth0_apps_create.html) (after `auth0 login`):

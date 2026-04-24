@@ -1,6 +1,6 @@
 # Superblocks Embed + React + Auth0
 
-This example shows how to embed a Superblocks application in a React app using [Auth0](https://auth0.com/) for identity and an [Auth0 Post-Login Action](https://auth0.com/docs/customize/actions) to mint a Superblocks session token—no AWS Lambda or SAM required. The flow follows [Login embed users with Auth0](https://docs.superblocks.com/hosting/embedded-apps/how-tos/use-auth-for-sso).
+This example shows how to embed a Superblocks application in a React app using [Auth0](https://auth0.com/) for identity and an [Auth0 Post-Login Action](https://auth0.com/docs/customize/actions) to mint a Superblocks session token. The flow follows [Login embed users with Auth0](https://docs.superblocks.com/hosting/embedded-apps/how-tos/use-auth-for-sso).
 
 ## Architecture
 

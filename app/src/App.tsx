@@ -1,21 +1,8 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { useLocation } from "react-router-dom";
+import React, { useEffect, useState, useCallback, createContext, useContext } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
-import { SuperblocksEmbed } from "@superblocksteam/embed-react";
+import { useLocation, useNavigate } from "react-router-dom";
 import ErrorPage from "./components/ErrorPage";
 import "./App.css";
-
-// embed-react v2 only re-exports `SuperblocksEmbed` from its package root, so
-// mirror the relevant event shapes locally to match the v2 callback signatures.
-type NavigationEvent = {
-  url: string;
-  href: string;
-  appId?: string;
-  pathname?: string;
-  search?: string;
-  queryParams?: Record<string, string>;
-};
-type AuthErrorEvent = { error: string };
 
 interface AppError {
   title: string;
@@ -24,30 +11,75 @@ interface AppError {
   statusCode?: number;
 }
 
-const App = () => {
-  const location = useLocation();
+interface SuperblocksAuthContextValue {
+  token: string;
+  signOut: () => void;
+  reportAuthError: (error: AppError) => void;
+}
+
+const SuperblocksAuthContext = createContext<SuperblocksAuthContextValue | undefined>(undefined);
+
+export const useSuperblocksAuth = (): SuperblocksAuthContextValue => {
+  const ctx = useContext(SuperblocksAuthContext);
+  if (!ctx) {
+    throw new Error("useSuperblocksAuth must be used within <App>");
+  }
+  return ctx;
+};
+
+const loadingContainerStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "center",
+  height: "100vh",
+  flexDirection: "column",
+  gap: "1rem",
+};
+
+const spinnerStyle: React.CSSProperties = {
+  border: "4px solid #f3f3f3",
+  borderTop: "4px solid #3498db",
+  borderRadius: "50%",
+  width: "40px",
+  height: "40px",
+  animation: "spin 1s linear infinite",
+};
+
+const toolbarButtonStyle: React.CSSProperties = {
+  padding: "6px 12px",
+  fontSize: 12,
+  fontFamily: "system-ui, sans-serif",
+  background: "#fff",
+  color: "#111",
+  border: "1px solid #d1d5db",
+  borderRadius: 6,
+  boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+  cursor: "pointer",
+};
+
+const LoadingScreen = ({ message }: { message: string }) => (
+  <div className="App">
+    <div style={loadingContainerStyle}>
+      <div style={spinnerStyle} />
+      <p>{message}</p>
+    </div>
+  </div>
+);
+
+const App = ({ children }: { children: React.ReactNode }) => {
   const { isLoading, isAuthenticated, loginWithRedirect, logout, getIdTokenClaims } = useAuth0();
-  const [superblocksToken, setSuperblocksToken] = useState<string>();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [superblocksToken, setSuperblocksToken] = useState<string | undefined>();
   const [error, setError] = useState<AppError | null>(null);
 
-  // Strip the Auth0 callback path so it never gets forwarded to the embed,
-  // which would render a 404 inside the Superblocks app.
-  const rawPath = `${location.pathname}${location.search}`;
-  const path = location.pathname.startsWith("/login/callback") ? "" : rawPath;
-
-  const superblocksApplicationId = process.env.REACT_APP_SUPERBLOCKS_APPLICATION_ID;
-  const superblocksUrl = process.env.REACT_APP_SUPERBLOCKS_URL;
-  const superblocksAppVersion = process.env.REACT_APP_SUPERBLOCKS_APP_VERSION || "2.0";
-
-  const getSuperblocksEmbedUrl = () => {
-    const basePath =
-      superblocksAppVersion === "2.0" ? "/code-mode/embed/applications" : "/embed/applications";
-    return `${superblocksUrl}${basePath}/${superblocksApplicationId}${path}`;
-  };
-
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     logout({ logoutParams: { returnTo: window.location.origin } });
-  };
+  }, [logout]);
+
+  // The landing app owns "/" and any non-/apps path (via the catch-all route),
+  // so only show the back button when we're inside a non-landing app's route.
+  const showBackToLanding = location.pathname.startsWith("/apps/");
 
   const loadSuperblocksTokenFromIdToken = useCallback(async () => {
     setError(null);
@@ -98,88 +130,12 @@ const App = () => {
     }
   }, [isAuthenticated, isLoading, loadSuperblocksTokenFromIdToken]);
 
-  const handleAuthError = (event: AuthErrorEvent) => {
-    console.error("Superblocks authentication error:", event);
-    setSuperblocksToken(undefined);
-    setError({
-      title: "Session Expired",
-      message: "Your Superblocks session has expired or encountered an authentication error.",
-      details: event?.error,
-    });
-  };
-
-  const handleNavigation = (event: NavigationEvent) => {
-    const route = `${event.pathname ?? ""}${event.search ?? ""}` || event.href || event.url;
-    console.log(`User navigated to: ${route}`);
-    window.history.pushState({ path: route }, "", route);
-  };
-
-  const handleEvents = (eventName: string, payload: Record<string, unknown>) => {
-    switch (eventName) {
-      case "logout":
-        handleLogout();
-        break;
-      default:
-        console.log(`Unknown event ${eventName}`, payload);
-    }
-  };
-
   if (isLoading) {
-    return (
-      <div className="App">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            height: "100vh",
-            flexDirection: "column",
-            gap: "1rem",
-          }}
-        >
-          <div
-            style={{
-              border: "4px solid #f3f3f3",
-              borderTop: "4px solid #3498db",
-              borderRadius: "50%",
-              width: "40px",
-              height: "40px",
-              animation: "spin 1s linear infinite",
-            }}
-          />
-          <p>Loading...</p>
-        </div>
-      </div>
-    );
+    return <LoadingScreen message="Loading..." />;
   }
 
   if (!isAuthenticated) {
-    return (
-      <div className="App">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            height: "100vh",
-            flexDirection: "column",
-            gap: "1rem",
-          }}
-        >
-          <div
-            style={{
-              border: "4px solid #f3f3f3",
-              borderTop: "4px solid #3498db",
-              borderRadius: "50%",
-              width: "40px",
-              height: "40px",
-              animation: "spin 1s linear infinite",
-            }}
-          />
-          <p>Redirecting to login...</p>
-        </div>
-      </div>
-    );
+    return <LoadingScreen message="Redirecting to login..." />;
   }
 
   if (error) {
@@ -195,41 +151,36 @@ const App = () => {
     );
   }
 
+  if (!superblocksToken) {
+    return <LoadingScreen message="Authenticating..." />;
+  }
+
   return (
-    <div className="App">
-      {superblocksToken ? (
-        <SuperblocksEmbed
-          src={getSuperblocksEmbedUrl()}
-          onNavigation={handleNavigation}
-          onAuthError={handleAuthError}
-          onEvent={handleEvents}
-          token={superblocksToken}
-        />
-      ) : (
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            height: "100vh",
-            flexDirection: "column",
-            gap: "1rem",
-          }}
-        >
-          <div
-            style={{
-              border: "4px solid #f3f3f3",
-              borderTop: "4px solid #3498db",
-              borderRadius: "50%",
-              width: "40px",
-              height: "40px",
-              animation: "spin 1s linear infinite",
-            }}
-          />
-          <p>Authenticating...</p>
+    <SuperblocksAuthContext.Provider
+      value={{
+        token: superblocksToken,
+        signOut: handleLogout,
+        reportAuthError: setError,
+      }}
+    >
+      <div className="App app-shell">
+        <div className="app-toolbar">
+          <div className="app-toolbar-left">
+            {showBackToLanding && (
+              <button onClick={() => navigate("/")} style={toolbarButtonStyle}>
+                ← Back to landing page
+              </button>
+            )}
+          </div>
+          <div className="app-toolbar-right">
+            <button onClick={handleLogout} style={toolbarButtonStyle}>
+              Sign out
+            </button>
+          </div>
         </div>
-      )}
-    </div>
+        <div className="app-content">{children}</div>
+      </div>
+    </SuperblocksAuthContext.Provider>
   );
 };
 
